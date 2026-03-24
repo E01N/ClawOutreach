@@ -56,8 +56,10 @@ Search criteria (target personas, industries, keywords, etc.) are defined by the
 
 **In active development — Phase 1: Foundation**
 
-- [ ] Repo structure and tooling
-- [ ] NanoClaw setup and `/prospect` skill
+- [x] Repo structure and tooling
+- [x] NanoClaw setup and Docker configured
+- [x] Telegram channel connected (required by NanoClaw but won't be used)
+- [ ] /prospect skill
 - [ ] Lead crawling and scoring
 - [ ] Draft generation via Claude API
 - [ ] Streamlit review dashboard
