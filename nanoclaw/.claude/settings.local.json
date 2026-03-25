@@ -5,7 +5,9 @@
       "Bash(node:*)",
       "Bash(export PATH=\"$HOME/.local/bin:$PATH\")",
       "Bash(onecli secrets:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(npm install:*)",
+      "Bash(npx playwright:*)"
     ]
   }
 }
