@@ -74,6 +74,7 @@ Search criteria (target personas, industries, keywords, etc.) are defined by the
 
 - Scheduled background runs (daily prospect discovery without manual trigger)
 - Additional data sources (Apollo.io, Hunter.io for verified emails)
+- LinkedIn DM automation via Unipile API (replace manual clipboard approach)
 - CRM export (HubSpot / Salesforce)
 - Deployment to an always-on server
 
