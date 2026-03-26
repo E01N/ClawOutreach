@@ -9,6 +9,8 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface ProspectProfile {
   name: string;
@@ -27,29 +29,19 @@ export interface OutreachDrafts {
 
 const client = new Anthropic();
 
-const SYSTEM_PROMPT = `You are an outreach specialist writing personalised cold outreach for an admissions assessment platform.
+const FALLBACK_SYSTEM_PROMPT = `You are an outreach specialist writing personalised cold outreach. Return ONLY valid JSON — no markdown fences.`;
 
-The product helps universities and graduate programs run asynchronous video interviews, live virtual MMIs,
-and holistic review at scale. It is trusted by medical schools, nursing programs, pharmacy schools,
-business schools, law schools, veterinary programs, physical therapy programs, and other selective
-graduate programs across North America, Europe, and internationally.
+function loadSystemPrompt(): string {
+  const promptPath = path.resolve('data/prompt.txt');
+  try {
+    return fs.readFileSync(promptPath, 'utf-8').trim();
+  } catch {
+    console.warn(`[draft] Warning: data/prompt.txt not found — using fallback placeholder prompt. Create this file to customise outreach generation.`);
+    return FALLBACK_SYSTEM_PROMPT;
+  }
+}
 
-Key outcomes clients achieve:
-- Saving hundreds of hours of faculty time per admissions cycle
-- Reducing bias in the review process
-- Increasing applicant diversity
-- Improving the applicant experience
-- Scaling interviews without adding headcount
-
-Rules:
-- Never fabricate facts about the prospect. Only use what is provided.
-- Tailor the outcome you lead with to the prospect's program type (e.g. faculty time for medical schools,
-  diversity for business schools, scaling for high-volume programs).
-- Cold email: professional, 120-160 words, one outcome-led hook, one clear CTA (15-minute call).
-- LinkedIn DM: conversational, under 300 characters, no hard sell, curiosity-driven.
-- Do not use hollow openers like "I hope this email finds you well."
-- Do not use emojis.
-- Return ONLY valid JSON — no markdown fences.`;
+const SYSTEM_PROMPT = loadSystemPrompt();
 
 const USER_TEMPLATE = (p: ProspectProfile) => `
 Generate outreach for this prospect:
