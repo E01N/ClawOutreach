@@ -94,11 +94,22 @@ async function runSetup(): Promise<void> {
     console.log('Press Enter after you have logged in...');
   });
 
-  // Confirm login
-  const loggedIn = await page
-    .locator('nav[aria-label="Primary Navigation"]')
-    .isVisible()
-    .catch(() => false);
+  // Wait for LinkedIn to fully settle after login
+  await page.waitForTimeout(4000);
+
+  // Confirm login — URL check first (most reliable), then DOM selectors as fallback
+  const currentUrl = page.url();
+  const urlIndicatesLogin = currentUrl.includes('/feed') ||
+    (!currentUrl.includes('/login') && !currentUrl.includes('/uas/') && currentUrl.includes('linkedin.com'));
+
+  const loggedIn = urlIndicatesLogin || await Promise.any([
+    page.locator('nav[aria-label="Primary Navigation"]').isVisible({ timeout: 8000 }),
+    page.locator('nav[aria-label="Global Navigation"]').isVisible({ timeout: 8000 }),
+    page.locator('[data-test-global-nav]').isVisible({ timeout: 8000 }),
+    page.locator('.global-nav').isVisible({ timeout: 8000 }),
+    page.locator('a[href*="/messaging/"]').isVisible({ timeout: 8000 }),
+    page.locator('.feed-identity-module').isVisible({ timeout: 8000 }),
+  ]).catch(() => false);
 
   if (!loggedIn) {
     log('WARNING: Could not confirm login. Saving session anyway.');
@@ -156,10 +167,18 @@ async function runCrawl(): Promise<void> {
     process.exit(1);
   }
 
-  const feedVisible = await page
-    .locator('nav[aria-label="Primary Navigation"]')
-    .isVisible({ timeout: 8000 })
-    .catch(() => false);
+  const crawlUrl = page.url();
+  const crawlUrlValid = crawlUrl.includes('/feed') ||
+    (!crawlUrl.includes('/login') && !crawlUrl.includes('/uas/') && crawlUrl.includes('linkedin.com'));
+
+  const feedVisible = crawlUrlValid || await Promise.any([
+    page.locator('nav[aria-label="Primary Navigation"]').isVisible({ timeout: 10000 }),
+    page.locator('nav[aria-label="Global Navigation"]').isVisible({ timeout: 10000 }),
+    page.locator('[data-test-global-nav]').isVisible({ timeout: 10000 }),
+    page.locator('.global-nav').isVisible({ timeout: 10000 }),
+    page.locator('a[href*="/messaging/"]').isVisible({ timeout: 10000 }),
+    page.locator('.feed-identity-module').isVisible({ timeout: 10000 }),
+  ]).catch(() => false);
 
   if (!feedVisible) {
     log('Session expired or not logged in. Run with --setup to re-authenticate.');
