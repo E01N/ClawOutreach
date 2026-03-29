@@ -27,7 +27,11 @@ export interface OutreachDrafts {
   linkedin_dm: string;
 }
 
-const client = new Anthropic();
+let client: Anthropic | null = null;
+function getClient(): Anthropic {
+  if (!client) client = new Anthropic();
+  return client;
+}
 
 const FALLBACK_SYSTEM_PROMPT = `You are an outreach specialist writing personalised cold outreach. Return ONLY valid JSON — no markdown fences.`;
 
@@ -62,7 +66,7 @@ Return a JSON object with exactly these keys:
 `;
 
 export async function generateDrafts(prospect: ProspectProfile): Promise<OutreachDrafts> {
-  const message = await client.messages.create({
+  const message = await getClient().messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 1024,
     system: SYSTEM_PROMPT,

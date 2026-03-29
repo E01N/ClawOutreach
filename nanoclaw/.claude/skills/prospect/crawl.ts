@@ -19,6 +19,15 @@ import { openDb, upsertProspect, saveDraft, alreadyCrawled, getAllProspects } fr
 
 // --- Config ---
 
+// Load .env manually (no dotenv dependency required)
+const envPath = path.join(process.cwd(), '.env');
+if (fs.existsSync(envPath)) {
+  for (const line of fs.readFileSync(envPath, 'utf-8').split('\n')) {
+    const m = line.match(/^([^#=\s][^=]*)=(.*)$/);
+    if (m) process.env[m[1].trim()] = m[2].trim().replace(/^["']|["']$/g, '');
+  }
+}
+
 const PROFILE_DIR  = path.join(process.cwd(), 'data', 'linkedin-profile');
 const AUTH_MARKER  = path.join(process.cwd(), 'data', 'linkedin-auth.json');
 const MAX_PROFILES = 30;
@@ -31,11 +40,11 @@ const DELAY_MAX = 5000;
 // Target LinkedIn people searches.
 // Results pages return up to 10 profiles each.
 const SEARCH_QUERIES = [
-  'director of admissions graduate school',
-  'dean of admissions professional program healthcare',
-  'enrollment director graduate university',
-  'program director healthcare graduate admissions',
-  'director enrollment management higher education',
+  'title:"director of admissions" graduate',
+  'title:"dean of admissions" professional program',
+  'title:"enrollment director" graduate university',
+  'title:"program director" healthcare graduate admissions',
+  'title:"director of enrollment" higher education',
 ];
 
 // --- Utilities ---
@@ -133,9 +142,24 @@ function runList(): void {
   }
   log(`${prospects.length} prospect(s) in database:\n`);
   for (const p of prospects) {
-    console.log(`  [${p.score}/10] ${p.name} — ${p.title} @ ${p.institution}`);
-    console.log(`         ${p.linkedin_url}`);
-    console.log(`         ${p.score_reason}\n`);
+    console.log(`${'─'.repeat(60)}`);
+    console.log(`[${p.score}/10] ${p.name}`);
+    console.log(`       ${p.title} @ ${p.institution}`);
+    console.log(`       ${p.linkedin_url}`);
+    console.log(`       ${p.score_reason}`);
+
+    const draft = (db as any)
+      .prepare('SELECT * FROM drafts WHERE prospect_id = ?')
+      .get(p.id);
+
+    if (draft) {
+      console.log(`\n  EMAIL SUBJECT: ${draft.email_subject}`);
+      console.log(`\n  EMAIL BODY:\n${draft.email_body.split('\n').map((l: string) => '  ' + l).join('\n')}`);
+      console.log(`\n  LINKEDIN DM:\n${draft.linkedin_dm.split('\n').map((l: string) => '  ' + l).join('\n')}`);
+    } else {
+      console.log(`\n  (no draft — score below threshold or draft not yet generated)`);
+    }
+    console.log('');
   }
 }
 
@@ -203,18 +227,14 @@ async function runCrawl(): Promise<void> {
       break;
     }
 
-    // Extract profile links from search results
-    const links: string[] = await page.evaluate(() => {
-      const anchors = Array.from(document.querySelectorAll('a[href*="/in/"]'));
-      return anchors
-        .map(a => (a as HTMLAnchorElement).href)
-        .filter(h => /linkedin\.com\/in\/[^/?]+/.test(h))
-        .map(h => {
-          const m = h.match(/(https:\/\/www\.linkedin\.com\/in\/[^/?#]+)/);
-          return m ? m[1] : '';
-        })
+    // Extract profile links from search results (string to avoid tsx/__name injection)
+    const links: string[] = await page.evaluate(`(() => {
+      return Array.from(document.querySelectorAll('a[href*="/in/"]'))
+        .map(a => a.href)
+        .filter(h => /linkedin\\.com\\/in\\/[^/?]+/.test(h))
+        .map(h => { const m = h.match(/(https:\\/\\/www\\.linkedin\\.com\\/in\\/[^/?#]+)/); return m ? m[1] : ''; })
         .filter(Boolean);
-    });
+    })()`);
 
     const unique = [...new Set(links)].filter(u => !profileUrls.includes(u));
     log(`Query "${query}": found ${unique.length} new profile URL(s)`);
@@ -250,59 +270,29 @@ async function runCrawl(): Promise<void> {
       break;
     }
 
-    // Extract profile data
-    const profileData = await page.evaluate(() => {
-      const text = (sel) =>
-        (document.querySelector(sel)?.innerText?.trim()) ?? '';
-
-      // Name: LinkedIn always has an h1 on the profile
+    // Extract profile data (passed as string to avoid tsx/__name injection)
+    const profileData = await page.evaluate(`(() => {
+      const text = sel => document.querySelector(sel)?.innerText?.trim() ?? '';
       const name = text('h1');
-
-      // Headline: paragraph immediately below the name section
-      const headline = text('.text-body-medium.break-words') ||
-                       text('[data-generated-suggestion-target]') ||
-                       '';
-
-      // Location
-      const location = text('.pv-text-details__left-panel .text-body-small.inline') ||
-                       text('.pb2 .pv-text-details__left-panel span') ||
-                       '';
-
-      // About section
-      const about = text('#about ~ div .pv-shared-text-with-see-more') ||
-                    text('[data-field="summary"]') ||
-                    '';
-
-      // Current position (title + institution from experience)
-      const experienceItems = Array.from(
-        document.querySelectorAll('.pvs-list__item--line-separated')
-      );
+      const headline = text('.text-body-medium.break-words') || text('[data-generated-suggestion-target]') || '';
+      const location = text('.pv-text-details__left-panel .text-body-small.inline') || text('.pb2 .pv-text-details__left-panel span') || '';
+      const about = text('#about ~ div .pv-shared-text-with-see-more') || text('[data-field="summary"]') || '';
+      const experienceItems = Array.from(document.querySelectorAll('.pvs-list__item--line-separated'));
       let title = '';
       let institution = '';
-
-      // Try to get title/institution from the top experience item
       if (experienceItems.length > 0) {
-        const item = experienceItems[0];
-        const spans = Array.from(item.querySelectorAll('span[aria-hidden="true"]'))
-          .map(s => s.innerText?.trim())
-          .filter(t => t && t.length > 1);
-        if (spans.length >= 2) {
-          title       = spans[0];
-          institution = spans[1];
-        } else if (spans.length === 1) {
-          title = spans[0];
-        }
+        const spans = Array.from(experienceItems[0].querySelectorAll('span[aria-hidden="true"]'))
+          .map(s => s.innerText?.trim()).filter(t => t && t.length > 1);
+        if (spans.length >= 2) { title = spans[0]; institution = spans[1]; }
+        else if (spans.length === 1) { title = spans[0]; }
       }
-
-      // Fallback: headline often contains "Title at Institution"
       if (!title && headline.includes(' at ')) {
         const parts = headline.split(' at ');
-        title       = parts[0].trim();
+        title = parts[0].trim();
         institution = parts.slice(1).join(' at ').trim();
       }
-
       return { name, title, institution, headline, location, about };
-    });
+    })()`);
 
     if (!profileData.name) {
       log(`  No name found — possibly redirected. Skipping.`);
@@ -389,6 +379,44 @@ async function runCrawl(): Promise<void> {
   console.log(`\n  Review drafts: npx tsx .claude/skills/prospect/crawl.ts --list`);
 }
 
+// --- Redraft mode: generate drafts for existing prospects that have none ---
+
+async function runRedraft(): Promise<void> {
+  const db = openDb();
+  const prospects = getAllProspects(db, MIN_SCORE_FOR_DRAFT);
+  const undrafted = prospects.filter(p => {
+    const existing = (db as any).prepare('SELECT id FROM drafts WHERE prospect_id = ?').get(p.id);
+    return !existing;
+  });
+
+  if (undrafted.length === 0) {
+    log('All qualifying prospects already have drafts.');
+    return;
+  }
+
+  log(`Generating drafts for ${undrafted.length} prospect(s) without drafts...`);
+  let drafted = 0;
+  for (const p of undrafted) {
+    log(`  Drafting for ${p.name}...`);
+    try {
+      const drafts = await generateDrafts({
+        name: p.name, title: p.title, institution: p.institution,
+        program_area: p.program_area, headline: p.headline, about: p.about,
+      });
+      saveDraft(db, {
+        prospect_id: p.id, email_subject: drafts.email_subject,
+        email_body: drafts.email_body, linkedin_dm: drafts.linkedin_dm,
+        drafted_at: new Date().toISOString(),
+      });
+      log(`  Draft saved.`);
+      drafted++;
+    } catch (err) {
+      log(`  Failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  log(`Done. ${drafted}/${undrafted.length} drafts created.`);
+}
+
 // --- Entry point ---
 
 const args = process.argv.slice(2);
@@ -397,6 +425,8 @@ if (args.includes('--setup')) {
   runSetup().catch(err => { console.error(err); process.exit(1); });
 } else if (args.includes('--list')) {
   runList();
+} else if (args.includes('--redraft')) {
+  runRedraft().catch(err => { console.error(err); process.exit(1); });
 } else {
   runCrawl().catch(err => { console.error(err); process.exit(1); });
 }
