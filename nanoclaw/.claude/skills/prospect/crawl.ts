@@ -252,8 +252,8 @@ async function runCrawl(): Promise<void> {
 
     // Extract profile data
     const profileData = await page.evaluate(() => {
-      const text = (sel: string): string =>
-        (document.querySelector(sel) as HTMLElement | null)?.innerText?.trim() ?? '';
+      const text = (sel) =>
+        (document.querySelector(sel)?.innerText?.trim()) ?? '';
 
       // Name: LinkedIn always has an h1 on the profile
       const name = text('h1');
@@ -282,9 +282,9 @@ async function runCrawl(): Promise<void> {
 
       // Try to get title/institution from the top experience item
       if (experienceItems.length > 0) {
-        const item = experienceItems[0] as HTMLElement;
+        const item = experienceItems[0];
         const spans = Array.from(item.querySelectorAll('span[aria-hidden="true"]'))
-          .map(s => (s as HTMLElement).innerText?.trim())
+          .map(s => s.innerText?.trim())
           .filter(t => t && t.length > 1);
         if (spans.length >= 2) {
           title       = spans[0];
