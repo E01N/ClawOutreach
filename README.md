@@ -76,15 +76,16 @@ All prospect data is verified against current LinkedIn profiles before outreach 
 - [x] Repo structure and tooling
 - [x] NanoClaw setup and Docker configured
 - [x] Telegram channel connected
-- [ ] `/prospect` skill
-- [ ] Lead crawling and scoring
-- [ ] Draft generation via Claude API
+- [x] `/prospect` skill built
+- [x] Lead crawling and scoring
+- [x] Draft generation via Claude API
+- [x] Web dashboard (server.ts + dashboard.html)
+- [x] Gmail compose integration
+- [x] LinkedIn DM clipboard + open-profile action
+- [x] Redo / regenerate drafts
 - [ ] Google Drive knowledge base integration
-- [ ] Industry news monitoring
-- [ ] Streamlit review dashboard
-- [ ] Gmail OAuth integration (Google Workspace)
-- [ ] LinkedIn clipboard + open-profile action
-- [ ] Redo / regenerate drafts
+- [ ] Industry news monitoring (35 sources)
+- [ ] Launcher scripts for one-click startup
 - [ ] Docs and setup guides
 
 ---
@@ -93,7 +94,7 @@ All prospect data is verified against current LinkedIn profiles before outreach 
 
 - Scheduled background runs (daily prospect discovery without manual trigger)
 - LinkedIn DM automation via [Unipile API](https://www.unipile.com) (replace manual clipboard approach)
-- Additional data sources (Apollo.io, Hunter.io for verified emails)
+- Multi-source research before drafting (industry news, blog cross-referencing)
 - CRM export (HubSpot / Salesforce)
 - Deployment to an always-on server
 
