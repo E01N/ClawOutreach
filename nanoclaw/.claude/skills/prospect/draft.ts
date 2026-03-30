@@ -90,5 +90,11 @@ export async function generateDrafts(prospect: ProspectProfile, research?: Resea
     parsed = JSON.parse(cleaned);
   }
 
+  // Strip em dashes from all fields - replace with a hyphen with spaces
+  const clean = (s: string) => s.replace(/\u2014/g, ' - ');
+  parsed.email_subject = clean(parsed.email_subject);
+  parsed.email_body    = clean(parsed.email_body);
+  parsed.linkedin_dm   = clean(parsed.linkedin_dm);
+
   return parsed;
 }
