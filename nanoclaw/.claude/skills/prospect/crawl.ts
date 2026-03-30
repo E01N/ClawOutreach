@@ -15,7 +15,9 @@ import path from 'path';
 import fs from 'fs';
 import { scoreProspect } from './score.js';
 import { generateDrafts } from './draft.js';
+import { researchProspect, closeResearchBrowser } from './research.js';
 import { openDb, upsertProspect, saveDraft, alreadyCrawled, getAllProspects } from './store.js';
+import { TARGET_SCHOOLS } from './schools.js';
 
 // --- Config ---
 
@@ -37,15 +39,27 @@ const MIN_SCORE_FOR_DRAFT = 5;
 const DELAY_MIN = 3000;
 const DELAY_MAX = 5000;
 
-// Target LinkedIn people searches.
-// Results pages return up to 10 profiles each.
-const SEARCH_QUERIES = [
-  'title:"director of admissions" graduate',
-  'title:"dean of admissions" professional program',
-  'title:"enrollment director" graduate university',
-  'title:"program director" healthcare graduate admissions',
-  'title:"director of enrollment" higher education',
-];
+// LinkedIn people search URLs using titleFreeText (exact title filter) +
+// keywords to narrow to graduate/professional programs.
+// Each URL targets a specific title × program area combination.
+// geoUrn 103644278 = United States — prevents returning results from other countries
+const GEO_US = '&geoUrn=%5B%22103644278%22%5D';
+
+// Institution-specific LinkedIn searches — anchor each search to a real school name
+// so we find actual admissions staff rather than random people with matching keywords.
+// Uses the first 3-4 words of each school name to stay under URL length limits.
+function schoolLinkedInSearch(schoolName: string, label: string): { url: string; label: string } {
+  const shortName = schoolName.split(' ').slice(0, 4).join(' ');
+  const kw = encodeURIComponent(`admissions "${shortName}"`);
+  return {
+    label,
+    url: `https://www.linkedin.com/search/results/people/?keywords=${kw}&origin=GLOBAL_SEARCH_HEADER${GEO_US}`,
+  };
+}
+
+const LINKEDIN_SEARCHES: Array<{ url: string; label: string }> = TARGET_SCHOOLS.map(s =>
+  schoolLinkedInSearch(s.name, `${s.name} – admissions staff`)
+);
 
 // --- Utilities ---
 
@@ -215,11 +229,10 @@ async function runCrawl(): Promise<void> {
   // Collect profile URLs from search results
   const profileUrls: string[] = [];
 
-  for (const query of SEARCH_QUERIES) {
+  for (const search of LINKEDIN_SEARCHES) {
     if (profileUrls.length >= MAX_PROFILES) break;
 
-    const searchUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(query)}&origin=GLOBAL_SEARCH_HEADER`;
-    await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto(search.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(2000);
 
     if (await isBlocked(page)) {
@@ -237,7 +250,7 @@ async function runCrawl(): Promise<void> {
     })()`);
 
     const unique = [...new Set(links)].filter(u => !profileUrls.includes(u));
-    log(`Query "${query}": found ${unique.length} new profile URL(s)`);
+    log(`[${search.label}]: found ${unique.length} new profile URL(s)`);
     profileUrls.push(...unique);
 
     await randomDelay();
@@ -307,6 +320,19 @@ async function runCrawl(): Promise<void> {
       about:       profileData.about,
     });
 
+    // Require at least one title-pattern match — drop students, recruiters, etc.
+    // that only score on program area / institution keywords.
+    const hasTitleMatch = score > 0 && reason.includes('(+');
+    const titleOnlyScore = (() => {
+      const titlePatterns = [/director/i, /dean/i, /enrollment/i, /admissions/i, /registrar/i, /recruiter/i, /program\s+director/i];
+      return titlePatterns.some(p => p.test(profileData.title) || p.test(profileData.headline));
+    })();
+    if (!titleOnlyScore) {
+      log(`  Skipping ${profileData.name} — no admissions/director title match (score: ${score})`);
+      await randomDelay();
+      continue;
+    }
+
     // Infer program area label from scoring corpus
     const corpus = [profileData.title, profileData.institution, profileData.headline, profileData.about].join(' ');
     let programArea = 'other';
@@ -336,6 +362,13 @@ async function runCrawl(): Promise<void> {
     // Generate drafts for qualifying prospects
     if (score >= MIN_SCORE_FOR_DRAFT) {
       try {
+        log(`  Researching ${profileData.institution}...`);
+        const research = await researchProspect(
+          profileData.name,
+          profileData.institution,
+          programArea,
+        );
+
         log(`  Drafting outreach for ${profileData.name}...`);
         const drafts = await generateDrafts({
           name:         profileData.name,
@@ -344,7 +377,7 @@ async function runCrawl(): Promise<void> {
           program_area: programArea,
           headline:     profileData.headline,
           about:        profileData.about,
-        });
+        }, research);
         saveDraft(db, {
           prospect_id:   prospectId,
           email_subject: drafts.email_subject,
@@ -363,6 +396,7 @@ async function runCrawl(): Promise<void> {
   }
 
   await ctx.close();
+  await closeResearchBrowser();
 
   // Summary
   const prospects = getAllProspects(db, MIN_SCORE_FOR_DRAFT);
@@ -397,12 +431,16 @@ async function runRedraft(): Promise<void> {
   log(`Generating drafts for ${undrafted.length} prospect(s) without drafts...`);
   let drafted = 0;
   for (const p of undrafted) {
+    log(`  Researching ${p.institution}...`);
+    let research;
+    try { research = await researchProspect(p.name, p.institution, p.program_area); } catch { /* skip */ }
+
     log(`  Drafting for ${p.name}...`);
     try {
       const drafts = await generateDrafts({
         name: p.name, title: p.title, institution: p.institution,
         program_area: p.program_area, headline: p.headline, about: p.about,
-      });
+      }, research);
       saveDraft(db, {
         prospect_id: p.id, email_subject: drafts.email_subject,
         email_body: drafts.email_body, linkedin_dm: drafts.linkedin_dm,
@@ -414,7 +452,316 @@ async function runRedraft(): Promise<void> {
       log(`  Failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
+  await closeResearchBrowser();
   log(`Done. ${drafted}/${undrafted.length} drafts created.`);
+}
+
+// --- School directory crawl ---
+
+/**
+ * Given a school's base URL, navigate to its root domain and score all
+ * internal links by how many admissions/staff keywords they contain.
+ * Returns the best candidate URL, or null if nothing useful found.
+ */
+async function discoverStaffUrl(page: { goto: Function; evaluate: Function }, directoryUrl: string): Promise<string | null> {
+  // Extract root domain (e.g. https://nursing.jhu.edu)
+  let origin: string;
+  try {
+    const u = new URL(directoryUrl);
+    origin = u.origin;
+  } catch {
+    return null;
+  }
+
+  try {
+    await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.waitForTimeout(1000);
+  } catch {
+    return null;
+  }
+
+  // Score every internal link by keyword density
+  const best: string | null = await page.evaluate(`(() => {
+    const KEYWORDS = ['admissions','admission','staff','directory','team','people',
+                      'contact','personnel','faculty','about','enrollment','enrolment'];
+    const origin = window.location.origin;
+
+    const links = Array.from(document.querySelectorAll('a[href]'))
+      .map(a => {
+        try { return new URL(a.href, origin).href; } catch { return null; }
+      })
+      .filter(href => href && href.startsWith(origin) && !href.includes('#'));
+
+    const unique = [...new Set(links)];
+
+    let best = null, bestScore = 0;
+    for (const href of unique) {
+      const path = href.replace(origin, '').toLowerCase();
+      let score = 0;
+      for (const kw of ${JSON.stringify(['admissions','admission','staff','directory','team','people','contact','enrollment','personnel'])}) {
+        if (path.includes(kw)) score += (kw === 'staff' || kw === 'directory' || kw === 'personnel') ? 3 : 1;
+      }
+      if (score > bestScore) { bestScore = score; best = href; }
+    }
+    return bestScore >= 2 ? best : null;
+  })()`);
+
+  return best;
+}
+
+async function runSchoolCrawl(): Promise<void> {
+  const db = openDb();
+  const { chromium: chr } = await import('playwright');
+  const browser = await chr.launch({ headless: false });
+  const context = await browser.newContext({
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  });
+  const page = await context.newPage();
+
+  let found = 0;
+  let drafted = 0;
+
+  log(`Scanning ${TARGET_SCHOOLS.length} school directory page(s)...`);
+
+  for (const school of TARGET_SCHOOLS) {
+    log(`[school] ${school.name} — ${school.directoryUrl}`);
+
+    try {
+      await page.goto(school.directoryUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    } catch {
+      log(`[school]   Could not load page — skipping.`);
+      continue;
+    }
+    // Wait for JS rendering but don't die if the page never fully idles
+    await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(2000);
+
+    // Extract staff name/title pairs from the page.
+    // Only returns entries where BOTH the name looks like a real person AND
+    // the title contains an admissions/enrollment/director keyword — this
+    // eliminates nav items, cookie banners, student pages, and generic headings.
+    const staffEntries: Array<{ name: string; title: string }> = await page.evaluate(`(() => {
+      // Must match an actual job title pattern — not just any word from a loose list
+      const TITLE_RE = /(director\s+of|associate\s+(dean|director)|assistant\s+(dean|director)|dean\s+of\s+(admissions|enrollment|graduate|students)|admissions\s+(director|officer|coordinator|counselor|manager|specialist|adviser|advisor)|enrollment\s+(director|manager|coordinator)|program\s+director|registrar|recruiter|recruitment\s+(coordinator|manager|specialist))/i;
+
+      // Blocklist of words that appear in nav/cookie/UI elements AND academic jargon that isn't a name
+      const JUNK = new Set(['quick','links','necessary','strictly','cookies','privacy','accept','decline','menu','search','home','back','next','skip','close','submit','login','more','read','learn','click','here','visit','view','contact','email','phone','fax','address','welcome','news','events','blog','resources','accessibility','toggle','navigation','sitemap','copyright','follow','share','admissions','enrollment','graduate','undergraduate','doctoral','phd','md','mba','jd','students','student','faculty','staff','program','programs','degree','degrees','licensure','disclosures','disclosure','federal','requirements','administration','council','advisory','senate','committee','committees','statistics','profile','class','leadership','executive','faqs','webinars','information','request','funding','logistics','bridge','about','apply','overview','office','department','directory','team','people','back','forward']);
+
+      function looksLikeName(s) {
+        if (!s) return false;
+        // No special characters except hyphen, apostrophe, period (for Jr. etc.)
+        if (/[?!@#$%^&*()+=\\[\\]{}|<>\\/\\\\0-9]/.test(s)) return false;
+        const words = s.trim().split(/\\s+/);
+        // Must be 2-4 words
+        if (words.length < 2 || words.length > 4) return false;
+        // Each word: starts uppercase, rest lowercase (allows Mc/Mac/O' patterns and hyphenated names)
+        if (!words.every(w => /^(Mc|Mac|O\\')?[A-Z][a-z\\-\\']{1,24}(\\.)?$/.test(w))) return false;
+        // At least 2 words must not be junk
+        const nonJunk = words.filter(w => !JUNK.has(w.toLowerCase().replace(/\\.$/, '')));
+        return nonJunk.length >= 2;
+      }
+
+      const results = [];
+
+      // Strategy 1: structured staff/people cards (most reliable)
+      const cardSelectors = [
+        '.staff-member', '.team-member', '.people-card', '.person-card',
+        '.faculty-member', '.directory-item', '.staff-listing__item',
+        '[class*="StaffCard"]', '[class*="TeamMember"]', '[class*="PersonCard"]',
+        '[class*="staff-card"]', '[class*="people-item"]', '[class*="faculty-item"]',
+        '[class*="bio-card"]', '[class*="profile-card"]',
+      ];
+      for (const sel of cardSelectors) {
+        const cards = Array.from(document.querySelectorAll(sel));
+        if (cards.length > 0) {
+          for (const card of cards) {
+            const nameEl = card.querySelector('h2,h3,h4,.name,[class*="name"],[class*="Name"]');
+            const titleEl = card.querySelector('p,.title,.position,[class*="title"],[class*="Title"],[class*="position"],[class*="Position"],[class*="role"],[class*="Role"]');
+            const name = nameEl?.innerText?.trim() || '';
+            const title = (titleEl?.innerText?.trim() || '').split('\\n')[0].trim();
+            if (looksLikeName(name) && TITLE_RE.test(title)) results.push({ name, title });
+          }
+          if (results.length > 0) return results;
+        }
+      }
+
+      // Strategy 2: definition list (dt = name, dd = title)
+      const dts = Array.from(document.querySelectorAll('dt'));
+      for (const dt of dts) {
+        const dd = dt.nextElementSibling;
+        const name = dt.innerText?.trim() || '';
+        const title = dd?.innerText?.trim() || '';
+        if (looksLikeName(name) && TITLE_RE.test(title)) results.push({ name, title });
+      }
+      if (results.length > 0) return results;
+
+      // Strategy 3: table rows where first cell = name, second cell = title
+      const rows = Array.from(document.querySelectorAll('tr'));
+      for (const row of rows) {
+        const cells = Array.from(row.querySelectorAll('td,th')).map(c => c.innerText?.trim() || '');
+        if (cells.length >= 2 && looksLikeName(cells[0]) && TITLE_RE.test(cells[1])) {
+          results.push({ name: cells[0], title: cells[1] });
+        }
+      }
+      if (results.length > 0) return results;
+
+      // Strategy 4: adjacent heading + paragraph/div siblings (h3/h4 name → p/div title)
+      const headings = Array.from(document.querySelectorAll('h3,h4,h5'));
+      for (const h of headings) {
+        const name = h.innerText?.trim() || '';
+        if (!looksLikeName(name)) continue;
+        let sib = h.nextElementSibling;
+        // Check up to 2 next siblings for a matching title
+        for (let n = 0; n < 2 && sib; n++, sib = sib.nextElementSibling) {
+          const title = (sib.innerText?.trim() || '').split('\\n')[0].trim();
+          if (TITLE_RE.test(title) && title.length < 80) { results.push({ name, title }); break; }
+        }
+      }
+      if (results.length > 0) return results;
+
+      // Strategy 5: scan ALL text for "Name\\nTitle" patterns within any element
+      const textNodes = Array.from(document.querySelectorAll('p, li, span, td, div'));
+      for (const el of textNodes) {
+        const lines = (el.innerText || '').split(/\\n+/).map(l => l.trim()).filter(Boolean);
+        for (let i = 0; i < lines.length - 1; i++) {
+          if (looksLikeName(lines[i]) && TITLE_RE.test(lines[i + 1]) && lines[i + 1].length < 80) {
+            results.push({ name: lines[i], title: lines[i + 1] });
+          }
+        }
+      }
+
+      // Deduplicate by name
+      const seen = new Set();
+      return results.filter(r => { if (seen.has(r.name)) return false; seen.add(r.name); return true; });
+    })()`);
+
+    if (staffEntries.length === 0) {
+      // Fallback: crawl the school's root domain and find the best staff/admissions link
+      log(`[school]   No entries found — trying auto-discovery...`);
+      const discovered = await discoverStaffUrl(page, school.directoryUrl);
+      if (discovered && discovered !== school.directoryUrl) {
+        log(`[school]   Trying discovered URL: ${discovered}`);
+        try {
+          await page.goto(discovered, { waitUntil: 'networkidle', timeout: 25000 });
+          await page.waitForTimeout(3000);
+          // Re-run the same extractor on the discovered page
+          const retryEntries: Array<{ name: string; title: string }> = await page.evaluate(`(() => {
+            const TITLE_RE = /(director\s+of|associate\s+(dean|director)|assistant\s+(dean|director)|dean\s+of\s+(admissions|enrollment|graduate|students)|admissions\s+(director|officer|coordinator|counselor|manager|specialist|adviser|advisor)|enrollment\s+(director|manager|coordinator)|program\s+director|registrar|recruiter|recruitment\s+(coordinator|manager|specialist))/i;
+            const JUNK = new Set(['quick','links','necessary','strictly','cookies','privacy','accept','decline','menu','search','home','back','next','skip','close','submit','login','more','read','learn','click','here','visit','view','contact','email','phone','fax','address','welcome','news','events','blog','resources','accessibility','toggle','navigation','sitemap','copyright','follow','share','admissions','enrollment','graduate','undergraduate','doctoral','phd','md','mba','jd','students','student','faculty','staff','program','programs','degree','degrees','licensure','disclosures','disclosure','federal','requirements','administration','council','advisory','senate','committee','committees','statistics','profile','class','leadership','executive','faqs','webinars','information','request','funding','logistics','bridge','about','apply','overview','office','department','directory','team','people','back','forward']);
+            function looksLikeName(s) {
+              if (!s) return false;
+              if (/[?!@#$%^&*()+=\\[\\]{}|<>\\/\\\\0-9]/.test(s)) return false;
+              const words = s.trim().split(/\\s+/);
+              if (words.length < 2 || words.length > 4) return false;
+              if (!words.every(w => /^(Mc|Mac|O\\')?[A-Z][a-z\\-\\']{1,24}(\\.)?$/.test(w))) return false;
+              return words.filter(w => !JUNK.has(w.toLowerCase().replace(/\\.$/, ''))).length >= 2;
+            }
+            const results = [];
+            const cardSelectors = ['.staff-member','.team-member','.people-card','.person-card','.faculty-member','.directory-item','[class*="StaffCard"]','[class*="TeamMember"]','[class*="staff-card"]','[class*="people-item"]'];
+            for (const sel of cardSelectors) {
+              const cards = Array.from(document.querySelectorAll(sel));
+              if (cards.length > 0) {
+                for (const card of cards) {
+                  const nameEl = card.querySelector('h2,h3,h4,.name,[class*="name"]');
+                  const titleEl = card.querySelector('p,.title,.position,[class*="title"],[class*="position"]');
+                  const name = nameEl?.innerText?.trim() || '';
+                  const title = (titleEl?.innerText?.trim() || '').split('\\n')[0].trim();
+                  if (looksLikeName(name) && TITLE_RE.test(title)) results.push({ name, title });
+                }
+                if (results.length > 0) return results;
+              }
+            }
+            const textNodes = Array.from(document.querySelectorAll('p,li,span,td'));
+            for (const el of textNodes) {
+              const lines = (el.innerText || '').split(/\\n+/).map(l => l.trim()).filter(Boolean);
+              for (let i = 0; i < lines.length - 1; i++) {
+                if (looksLikeName(lines[i]) && TITLE_RE.test(lines[i+1]) && lines[i+1].length < 80) results.push({ name: lines[i], title: lines[i+1] });
+              }
+            }
+            const seen = new Set();
+            return results.filter(r => { if (seen.has(r.name)) return false; seen.add(r.name); return true; });
+          })()`);
+          if (retryEntries.length > 0) {
+            staffEntries.push(...retryEntries);
+            log(`[school]   Auto-discovery found ${retryEntries.length} entry/entries.`);
+          }
+        } catch {
+          // ignore — fall through to "no entries" below
+        }
+      }
+      if (staffEntries.length === 0) {
+        log(`[school]   No staff entries found — skipping.`);
+        continue;
+      }
+    }
+
+    log(`[school]   Found ${staffEntries.length} staff entry/entries. Scoring...`);
+
+    for (const entry of staffEntries) {
+      const { score, reason } = scoreProspect({
+        title: entry.title,
+        institution: school.name,
+        headline: entry.title,
+        about: '',
+      });
+
+      if (score < 3) continue; // skip clearly irrelevant
+
+      // Use school page URL as a stable unique key (name deduplication)
+      const stableUrl = `school:${school.directoryUrl}#${entry.name.toLowerCase().replace(/\s+/g, '-')}`;
+
+      if (alreadyCrawled(db, stableUrl)) {
+        log(`[school]   Already stored: ${entry.name}`);
+        continue;
+      }
+
+      const programArea = school.vertical === 'pa_program' || school.vertical === 'physical_therapy' || school.vertical === 'occupational_therapy'
+        ? 'allied_health'
+        : school.vertical === 'public_health' ? 'healthcare'
+        : school.vertical;
+
+      const prospectId = upsertProspect(db, {
+        name:         entry.name,
+        title:        entry.title,
+        institution:  school.name,
+        program_area: programArea,
+        linkedin_url: stableUrl,
+        location:     '',
+        headline:     entry.title,
+        about:        '',
+        score,
+        score_reason: reason,
+        crawled_at:   new Date().toISOString(),
+      });
+
+      log(`[school]   ${entry.name} — ${entry.title} | score: ${score}/10 (${reason})`);
+      found++;
+
+      if (score >= MIN_SCORE_FOR_DRAFT) {
+        try {
+          log(`[school]   Drafting for ${entry.name}...`);
+          const research = await researchProspect(entry.name, school.name, programArea).catch(() => undefined);
+          const drafts = await generateDrafts({
+            name: entry.name, title: entry.title, institution: school.name,
+            program_area: programArea, headline: entry.title, about: '',
+          }, research);
+          saveDraft(db, { prospect_id: prospectId, ...drafts, drafted_at: new Date().toISOString() });
+          log(`[school]   Draft saved.`);
+          drafted++;
+        } catch (err) {
+          log(`[school]   Draft failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+
+    await randomDelay();
+  }
+
+  await context.close();
+  await browser.close();
+  await closeResearchBrowser();
+
+  log(`\nSchool scan complete. ${found} new prospect(s), ${drafted} draft(s).`);
 }
 
 // --- Entry point ---
@@ -427,6 +774,11 @@ if (args.includes('--setup')) {
   runList();
 } else if (args.includes('--redraft')) {
   runRedraft().catch(err => { console.error(err); process.exit(1); });
+} else if (args.includes('--schools')) {
+  runSchoolCrawl().catch(err => { console.error(err); process.exit(1); });
 } else {
-  runCrawl().catch(err => { console.error(err); process.exit(1); });
+  // Default: LinkedIn first, then school directories
+  runCrawl()
+    .then(() => runSchoolCrawl())
+    .catch(err => { console.error(err); process.exit(1); });
 }

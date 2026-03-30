@@ -12,6 +12,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { openDb, getAllProspects, saveDraft } from './store.js';
 import { generateDrafts } from './draft.js';
+import { researchProspect, closeResearchBrowser } from './research.js';
 import type Database from 'better-sqlite3';
 
 const PORT = 3100;
@@ -52,7 +53,7 @@ function broadcast(line: string) {
 function startCrawl() {
   if (crawlProcess) return;
   const crawlPath = path.join(__dirname, 'crawl.ts');
-  crawlProcess = spawn('npx', ['tsx', crawlPath], { cwd: process.cwd(), env: process.env });
+  crawlProcess = spawn('npx', ['tsx', crawlPath], { cwd: process.cwd(), env: process.env, shell: true });
   crawlProcess.stdout?.on('data', d => broadcast(d.toString()));
   crawlProcess.stderr?.on('data', d => broadcast('[err] ' + d.toString()));
   crawlProcess.on('close', () => { broadcast('__DONE__'); crawlProcess = null; });
@@ -129,12 +130,23 @@ const server = http.createServer(async (req, res) => {
     const p = (db as any).prepare('SELECT * FROM prospects WHERE id = ?').get(id);
     if (!p) { json(res, 404, { error: 'not found' }); return; }
     try {
-      const drafts = await generateDrafts(p);
+      const research = await researchProspect(p.name, p.institution, p.program_area).catch(() => undefined);
+      await closeResearchBrowser();
+      const drafts = await generateDrafts(p, research);
       saveDraft(db, { prospect_id: id, ...drafts, drafted_at: new Date().toISOString() });
       json(res, 200, { ok: true });
     } catch (err) {
       json(res, 500, { error: String(err) });
     }
+    return;
+  }
+
+  // Clear all prospects and drafts
+  if (method === 'POST' && pathname === '/api/clear') {
+    const db = openDb();
+    (db as any).prepare('DELETE FROM drafts').run();
+    (db as any).prepare('DELETE FROM prospects').run();
+    json(res, 200, { ok: true });
     return;
   }
 

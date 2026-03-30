@@ -11,6 +11,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import * as fs from 'fs';
 import * as path from 'path';
+import type { ResearchResult } from './research.js';
 
 export interface ProspectProfile {
   name: string;
@@ -47,7 +48,7 @@ function loadSystemPrompt(): string {
 
 const SYSTEM_PROMPT = loadSystemPrompt();
 
-const USER_TEMPLATE = (p: ProspectProfile) => `
+const USER_TEMPLATE = (p: ProspectProfile, research?: ResearchResult) => `
 Generate outreach for this prospect:
 
 Name: ${p.name}
@@ -56,7 +57,7 @@ Institution: ${p.institution}
 Program area: ${p.program_area}
 Headline: ${p.headline}
 About: ${p.about.slice(0, 500)}
-
+${research?.summary ? `\nResearch context:\n${research.summary}` : ''}
 Return a JSON object with exactly these keys:
 {
   "email_subject": "...",
@@ -65,13 +66,13 @@ Return a JSON object with exactly these keys:
 }
 `;
 
-export async function generateDrafts(prospect: ProspectProfile): Promise<OutreachDrafts> {
+export async function generateDrafts(prospect: ProspectProfile, research?: ResearchResult): Promise<OutreachDrafts> {
   const message = await getClient().messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 1024,
     system: SYSTEM_PROMPT,
     messages: [
-      { role: 'user', content: USER_TEMPLATE(prospect) }
+      { role: 'user', content: USER_TEMPLATE(prospect, research) }
     ],
   });
 

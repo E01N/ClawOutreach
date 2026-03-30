@@ -17,9 +17,31 @@
   .btn-primary:hover:not(:disabled) { background: #1d4ed8; }
   .btn-primary:disabled { background: #93c5fd; cursor: not-allowed; }
 
-  #log-wrap { background: #0f0f0f; overflow: hidden; max-height: 0; transition: max-height 0.3s ease; }
-  #log-wrap.open { max-height: 180px; }
-  #log { color: #4ade80; font-family: 'Menlo', 'Consolas', monospace; font-size: 11.5px; padding: 10px 28px; overflow-y: auto; max-height: 180px; white-space: pre-wrap; word-break: break-all; }
+  #scan-panel { background: #0f0f0f; overflow: hidden; max-height: 0; transition: max-height 0.35s ease; }
+  #scan-panel.open { max-height: 290px; }
+  #scan-inner { padding: 14px 28px 16px; }
+
+  .scan-header { display: flex; align-items: center; gap: 10px; margin-bottom: 11px; }
+  .scan-pulse { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; flex-shrink: 0; animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.75)} }
+  .scan-title { color: #e5e7eb; font-size: 13px; font-weight: 600; }
+  .scan-meta { color: #6b7280; font-size: 12px; margin-left: auto; }
+
+  .progress-wrap { background: #1f1f1f; border-radius: 99px; height: 5px; margin-bottom: 13px; overflow: hidden; }
+  .progress-bar { height: 100%; border-radius: 99px; background: linear-gradient(90deg,#2563eb,#4ade80); transition: width 0.4s ease; }
+  .progress-bar.indeterminate { width: 35% !important; animation: slide 1.6s ease-in-out infinite; }
+  @keyframes slide { 0%{transform:translateX(-200%)}100%{transform:translateX(450%)} }
+
+  #activity-feed { max-height: 170px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+  #activity-feed::-webkit-scrollbar { width: 4px; }
+  #activity-feed::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 2px; }
+  .ai { display: flex; align-items: baseline; gap: 8px; font-size: 12px; line-height: 1.45; }
+  .ai-icon { flex-shrink: 0; width: 14px; font-size: 10px; }
+  .ai-text { color: #9ca3af; }
+  .ai-text b { color: #e5e7eb; font-weight: 500; }
+  .ai-text .hi { color: #4ade80; } .ai-text .mid { color: #fbbf24; } .ai-text .lo { color: #6b7280; }
+  .ai-active .ai-text { color: #60a5fa; }
+  .ai-active .ai-text b { color: #93c5fd; }
 
   main { max-width: 820px; margin: 28px auto; padding: 0 16px 60px; }
   .stats { font-size: 13px; color: #6b7280; margin-bottom: 18px; display: flex; gap: 16px; }
@@ -86,12 +108,21 @@
   <h1>ClawOutreach</h1>
   <div class="header-right">
     <span id="crawl-status" style="font-size:12px;color:#6b7280;display:none"></span>
+    <button class="btn" id="clearBtn" onclick="clearCache()" style="background:#1f1f1f;color:#9ca3af;border:1px solid #333">Clear Cache</button>
     <button class="btn btn-primary" id="findBtn" onclick="findLeads()">Find Leads</button>
   </div>
 </header>
 
-<div id="log-wrap">
-  <div id="log"></div>
+<div id="scan-panel">
+  <div id="scan-inner">
+    <div class="scan-header">
+      <div class="scan-pulse"></div>
+      <span class="scan-title" id="scan-title">Scanning LinkedIn...</span>
+      <span class="scan-meta" id="scan-meta"></span>
+    </div>
+    <div class="progress-wrap"><div class="progress-bar indeterminate" id="progress-bar"></div></div>
+    <div id="activity-feed"></div>
+  </div>
 </div>
 
 <main>
@@ -248,22 +279,189 @@ async function redo(id) {
   }
 }
 
+// ── Clear cache ────────────────────────────────────────────────────────────
+
+async function clearCache() {
+  if (!confirm('Delete all prospects and drafts? This cannot be undone.')) return;
+  const btn = document.getElementById('clearBtn');
+  btn.textContent = 'Clearing...';
+  btn.disabled = true;
+  await fetch('/api/clear', { method: 'POST' });
+  await load();
+  btn.textContent = 'Clear Cache';
+  btn.disabled = false;
+  toast('Cache cleared — ready for a fresh scan.');
+}
+
 // ── Find Leads ─────────────────────────────────────────────────────────────
 
-function findLeads() {
-  const btn = document.getElementById('findBtn');
-  const logWrap = document.getElementById('log-wrap');
-  const log = document.getElementById('log');
+let scanTotal = 0, scanCurrent = 0, scanDrafted = 0, scanFound = 0, scanSkipped = 0;
+
+function addActivity(icon, html, active) {
+  const feed = document.getElementById('activity-feed');
+  const item = document.createElement('div');
+  item.className = 'ai' + (active ? ' ai-active' : '');
+  item.innerHTML = '<span class="ai-icon">' + icon + '</span><span class="ai-text">' + html + '</span>';
+  feed.appendChild(item);
+  feed.scrollTop = feed.scrollHeight;
+  return item;
+}
+
+function updateProgress() {
+  const bar = document.getElementById('progress-bar');
+  const meta = document.getElementById('scan-meta');
+  if (scanTotal > 0) {
+    bar.classList.remove('indeterminate');
+    bar.style.width = Math.round((scanCurrent / scanTotal) * 100) + '%';
+    meta.textContent = scanCurrent + ' / ' + scanTotal + ' profiles';
+  }
+}
+
+function parseLine(line) {
+  const title = document.getElementById('scan-title');
+
+  // Profile visit progress: [3/30] Visiting:
+  const visitMatch = line.match(/\[(\d+)\/(\d+)\] Visiting:/);
+  if (visitMatch) {
+    scanCurrent = parseInt(visitMatch[1]);
+    scanTotal   = parseInt(visitMatch[2]);
+    title.textContent = 'Scanning profiles...';
+    updateProgress();
+    return;
+  }
+
+  // Total profiles found: Visiting 28 profile(s)
+  const totalMatch = line.match(/Visiting (\d+) profile/);
+  if (totalMatch) {
+    scanTotal = parseInt(totalMatch[1]);
+    title.textContent = 'Visiting profiles...';
+    updateProgress();
+    return;
+  }
+
+  // Scored prospect line:  Name — Title @ Inst | score: 7/10
+  const scoreMatch = line.match(/^\s+(.+?) —.*\|\s*score:\s*(\d+)\/10/);
+  if (scoreMatch) {
+    const name = scoreMatch[1].trim();
+    const score = parseInt(scoreMatch[2]);
+    const cls = score >= 7 ? 'hi' : score >= 5 ? 'mid' : 'lo';
+    scanFound++;
+    addActivity('👤', '<b>' + esc(name) + '</b> — score <span class="' + cls + '">' + score + '/10</span>');
+    return;
+  }
+
+  // Research step
+  const researchMatch = line.match(/\[research\] Researching (.+?) @/);
+  if (researchMatch) {
+    title.textContent = 'Researching institution...';
+    addActivity('🔍', 'Researching <b>' + esc(researchMatch[1]) + '</b>...', true);
+    return;
+  }
+
+  // Draft step
+  const draftMatch = line.match(/Drafting outreach for (.+?)\.\.\./);
+  if (draftMatch) {
+    title.textContent = 'Writing draft...';
+    addActivity('✍️', 'Drafting outreach for <b>' + esc(draftMatch[1]) + '</b>...', true);
+    return;
+  }
+
+  // Draft saved
+  if (line.includes('Draft saved')) {
+    scanDrafted++;
+    document.getElementById('scan-meta').textContent =
+      scanTotal > 0 ? scanCurrent + ' / ' + scanTotal + ' profiles · ' + scanDrafted + ' drafted'
+                    : scanDrafted + ' drafted';
+    // Replace the active drafting item with a done version
+    const feed = document.getElementById('activity-feed');
+    const last = feed.querySelector('.ai-active:last-child');
+    if (last) { last.classList.remove('ai-active'); last.querySelector('.ai-text').innerHTML = last.querySelector('.ai-text').innerHTML.replace('Drafting', '✓ Drafted'); }
+    return;
+  }
+
+  // School directory scan
+  const schoolMatch = line.match(/\[school\] (.+?) —/);
+  if (schoolMatch) {
+    title.textContent = 'Scanning school directories...';
+    addActivity('🏫', 'Checking <b>' + esc(schoolMatch[1]) + '</b>...', true);
+    return;
+  }
+  if (line.includes('[school]') && line.includes('Found')) {
+    const last = document.querySelector('#activity-feed .ai-active:last-child');
+    if (last) last.classList.remove('ai-active');
+    return;
+  }
+  if (line.includes('School scan complete')) {
+    addActivity('✓', line.replace('[prospect]', '').trim());
+    return;
+  }
+
+  // Collecting URLs
+  if (line.includes('Collecting profile URLs')) {
+    title.textContent = 'Collecting profile URLs...';
+    addActivity('🔗', 'Collecting profile URLs from LinkedIn search...');
+    return;
+  }
+
+  // Blocked
+  if (line.includes('BLOCKED')) {
+    addActivity('⚠️', '<b>LinkedIn rate limit hit</b> — stopping early. Try again in a few hours.');
+    return;
+  }
+
+  // Already crawled / skipped — batch-count them, show summary periodically
+  if (line.includes('Already crawled')) {
+    scanSkipped++;
+    scanCurrent = Math.max(scanCurrent, scanSkipped + scanFound);
+    updateProgress();
+    // Update or create a single "skipped" summary item instead of spamming
+    const feed = document.getElementById('activity-feed');
+    let skipItem = feed.querySelector('.skip-summary');
+    if (!skipItem) {
+      skipItem = document.createElement('div');
+      skipItem.className = 'ai skip-summary';
+      skipItem.innerHTML = '<span class="ai-icon">⏭</span><span class="ai-text"></span>';
+      feed.insertBefore(skipItem, feed.firstChild);
+    }
+    skipItem.querySelector('.ai-text').textContent = scanSkipped + ' profile' + (scanSkipped !== 1 ? 's' : '') + ' already in database — skipping';
+    return;
+  }
+
+  // LinkedIn session confirmed active
+  if (line.includes('LinkedIn session active')) {
+    title.textContent = 'LinkedIn connected — collecting profiles...';
+    addActivity('✓', 'LinkedIn session active');
+    return;
+  }
+
+  // Stderr / error lines
+  if (line.startsWith('[err]')) {
+    const msg = line.replace('[err]', '').trim();
+    if (msg) addActivity('⚠', '<b>Error:</b> ' + esc(msg.slice(0, 120)));
+    return;
+  }
+}
+
+async function findLeads() {
+  const btn    = document.getElementById('findBtn');
+  const panel  = document.getElementById('scan-panel');
   const status = document.getElementById('crawl-status');
+
+  // Reset state
+  scanTotal = 0; scanCurrent = 0; scanDrafted = 0; scanFound = 0; scanSkipped = 0;
+  document.getElementById('activity-feed').innerHTML = '';
+  document.getElementById('scan-title').textContent = 'Connecting to LinkedIn...';
+  document.getElementById('scan-meta').textContent = '';
+  const bar = document.getElementById('progress-bar');
+  bar.classList.add('indeterminate');
+  bar.style.width = '';
 
   btn.disabled = true;
   btn.textContent = 'Running...';
-  log.textContent = '';
-  logWrap.classList.add('open');
-  status.style.display = 'inline';
-  status.textContent = 'Crawling LinkedIn...';
+  panel.classList.add('open');
+  status.style.display = 'none';
 
-  fetch('/api/crawl', { method: 'POST' });
+  await fetch('/api/crawl', { method: 'POST' });
 
   const es = new EventSource('/api/crawl/stream');
   es.onmessage = e => {
@@ -271,19 +469,22 @@ function findLeads() {
       es.close();
       btn.disabled = false;
       btn.textContent = 'Find Leads';
-      status.style.display = 'none';
-      setTimeout(() => { logWrap.classList.remove('open'); }, 3000);
+      const summary = scanFound > 0
+        ? '✓ Scan complete — ' + scanFound + ' new prospect' + (scanFound !== 1 ? 's' : '') + ', ' + scanDrafted + ' drafted'
+        : '✓ Scan complete — ' + (scanSkipped > 0 ? scanSkipped + ' profiles already cached, no new leads' : 'no new leads found');
+      document.getElementById('scan-title').textContent = summary;
+      bar.classList.remove('indeterminate');
+      bar.style.width = '100%';
+      setTimeout(() => { panel.classList.remove('open'); }, 5000);
       load();
     } else {
-      log.textContent += e.data;
-      log.scrollTop = log.scrollHeight;
+      parseLine(e.data);
     }
   };
   es.onerror = () => {
     es.close();
     btn.disabled = false;
     btn.textContent = 'Find Leads';
-    status.style.display = 'none';
   };
 }
 
