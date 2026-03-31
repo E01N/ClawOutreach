@@ -15,6 +15,7 @@ export interface Prospect {
   institution: string;
   program_area: string; // healthcare | business | law | allied_health | other
   linkedin_url: string;
+  email: string;
   location: string;
   headline: string;
   about: string;
@@ -52,6 +53,12 @@ export function openDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_prospect_url ON prospects(linkedin_url);
     CREATE INDEX IF NOT EXISTS idx_prospect_score ON prospects(score DESC);
+  `);
+
+  // Migration: add email column if it doesn't exist yet
+  try { db.exec(`ALTER TABLE prospects ADD COLUMN email TEXT DEFAULT ''`); } catch { /* already exists */ }
+
+  db.exec(`
 
     CREATE TABLE IF NOT EXISTS drafts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,16 +83,16 @@ export function upsertProspect(db: Database.Database, p: Prospect): number {
   if (existing) {
     db.prepare(`
       UPDATE prospects
-      SET name=?, title=?, institution=?, program_area=?, location=?, headline=?, about=?, score=?, score_reason=?, crawled_at=?
+      SET name=?, title=?, institution=?, program_area=?, email=?, location=?, headline=?, about=?, score=?, score_reason=?, crawled_at=?
       WHERE linkedin_url=?
-    `).run(p.name, p.title, p.institution, p.program_area, p.location, p.headline, p.about, p.score, p.score_reason, p.crawled_at, p.linkedin_url);
+    `).run(p.name, p.title, p.institution, p.program_area, p.email ?? '', p.location, p.headline, p.about, p.score, p.score_reason, p.crawled_at, p.linkedin_url);
     return existing.id;
   }
 
   const result = db.prepare(`
-    INSERT INTO prospects (name, title, institution, program_area, linkedin_url, location, headline, about, score, score_reason, crawled_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(p.name, p.title, p.institution, p.program_area, p.linkedin_url, p.location, p.headline, p.about, p.score, p.score_reason, p.crawled_at);
+    INSERT INTO prospects (name, title, institution, program_area, linkedin_url, email, location, headline, about, score, score_reason, crawled_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(p.name, p.title, p.institution, p.program_area, p.linkedin_url, p.email ?? '', p.location, p.headline, p.about, p.score, p.score_reason, p.crawled_at);
 
   return result.lastInsertRowid as number;
 }

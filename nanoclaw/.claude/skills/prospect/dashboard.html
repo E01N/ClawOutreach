@@ -189,7 +189,7 @@ function render() {
         '<span class="score-badge ' + scoreClass + '">' + p.score + '/10</span>' +
         '<div class="prospect-info">' +
           '<div class="prospect-name">' + esc(p.name) + (p.approved ? '<span class="approved-badge">APPROVED</span>' : '') + '</div>' +
-          '<div class="prospect-sub">' + (meta ? esc(meta) + ' &nbsp;·&nbsp; ' : '') + '<a href="' + p.linkedin_url + '" target="_blank" onclick="event.stopPropagation()">LinkedIn ↗</a></div>' +
+          '<div class="prospect-sub">' + (meta ? esc(meta) + ' &nbsp;·&nbsp; ' : '') + (function(u) { var isSchool = u.startsWith("school:"); var href = isSchool ? u.slice(7) : u; return '<a href="' + href + '" target="_blank" onclick="event.stopPropagation()">' + (isSchool ? 'Website ↗' : 'LinkedIn ↗') + '</a>'; })(p.linkedin_url) + '</div>' +
         '</div>' +
         '<span class="chevron" id="chev-' + p.id + '">▼</span>' +
       '</div>' +
@@ -215,7 +215,8 @@ function openGmail(i) {
   if (!p.draft) return;
   const subj = document.getElementById('subj-' + p.id).value;
   const body = document.getElementById('email-' + p.id).value;
-  window.open('https://mail.google.com/mail/?view=cm&su=' + encodeURIComponent(subj) + '&body=' + encodeURIComponent(body), '_blank');
+  const to = p.email ? '&to=' + encodeURIComponent(p.email) : '';
+  window.open('https://mail.google.com/mail/?view=cm' + to + '&su=' + encodeURIComponent(subj) + '&body=' + encodeURIComponent(body), '_blank');
 }
 
 async function copyDm(i) {
@@ -223,7 +224,10 @@ async function copyDm(i) {
   if (!p.draft) return;
   const dm = document.getElementById('dm-' + p.id).value;
   await navigator.clipboard.writeText(dm);
-  window.open(p.linkedin_url, '_blank');
+  const url = p.linkedin_url.startsWith('school:')
+    ? 'https://www.linkedin.com/search/results/people/?keywords=' + encodeURIComponent(p.name + ' ' + p.institution)
+    : p.linkedin_url;
+  window.open(url, '_blank');
   toast('DM copied! Paste it on LinkedIn.');
 }
 
