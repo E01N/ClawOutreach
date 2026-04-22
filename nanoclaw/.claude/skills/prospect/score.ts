@@ -34,21 +34,22 @@ const TARGET_TITLES: Array<{ pattern: RegExp; points: number; label: string }> =
   { pattern: /director.*(enrollment|recruitment)/i,                 points: 4, label: 'Director of Enrollment' },
   { pattern: /associate\s+dean.*(admissions|enrollment)/i,          points: 4, label: 'Associate Dean Admissions' },
   { pattern: /assistant\s+dean.*(admissions|enrollment)/i,          points: 3, label: 'Assistant Dean Admissions' },
-  { pattern: /admissions\s+(manager|coordinator|officer)/i,         points: 2, label: 'Admissions Manager/Coordinator' },
+  { pattern: /admissions\s+officer/i,                               points: 3, label: 'Admissions Officer' },
+  { pattern: /admissions\s+(manager|coordinator)/i,                 points: 2, label: 'Admissions Manager/Coordinator' },
   { pattern: /enrollment\s+(manager|coordinator|specialist)/i,      points: 2, label: 'Enrollment Manager/Coordinator' },
   { pattern: /registrar/i,                                          points: 1, label: 'Registrar' },
 ];
 
 const PROGRAM_AREAS: Array<{ pattern: RegExp; area: string; points: number }> = [
   { pattern: /nursing|healthcare|health\s*(care|sciences?|admin)|medical|medicine|pharmacy|public\s+health/i, area: 'healthcare',    points: 3 },
-  { pattern: /allied\s+health|physical\s+therapy|occupational\s+therapy|physician\s+assistant|pa\s+program|dental/i, area: 'allied_health', points: 3 },
+  { pattern: /allied\s+health|physical\s+therapy|occupational\s+therapy|physician\s+assistant|pa\s+program|dent(al|istry)/i, area: 'allied_health', points: 3 },
   { pattern: /business|mba|management|finance|accounting|marketing/i,                                          area: 'business',     points: 2 },
   { pattern: /law\s+school|juris|jd|legal/i,                                                                   area: 'law',          points: 2 },
   { pattern: /graduate|professional\s+school|master|mpa|mph|msn|msw|counseling|social\s+work/i,               area: 'other_grad',   points: 1 },
 ];
 
 const INSTITUTION_SIGNALS: Array<{ pattern: RegExp; points: number }> = [
-  { pattern: /graduate\s+school|professional\s+school|college\s+of\s+(medicine|nursing|law|business|health)/i, points: 2 },
+  { pattern: /graduate\s+school|professional\s+school|college\s+of\s+(medicine|nursing|law|business|health|dentistry|pharmacy|veterinary)/i, points: 2 },
   { pattern: /university|college|school\s+of/i,                                                                 points: 1 },
 ];
 
