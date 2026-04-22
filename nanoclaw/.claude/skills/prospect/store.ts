@@ -110,9 +110,17 @@ export function saveDraft(db: Database.Database, d: Draft): void {
   `).run(d.prospect_id, d.email_subject, d.email_body, d.linkedin_dm, d.drafted_at);
 }
 
-/** Returns true if this LinkedIn URL has already been crawled. */
+/** Returns true if this URL has already been crawled. */
 export function alreadyCrawled(db: Database.Database, linkedinUrl: string): boolean {
   return !!db.prepare('SELECT id FROM prospects WHERE linkedin_url = ?').get(linkedinUrl);
+}
+
+/** Returns true if this URL was crawled less than maxAgeDays ago. */
+export function recentlyCrawled(db: Database.Database, linkedinUrl: string, maxAgeDays = 60): boolean {
+  const row = db.prepare('SELECT crawled_at FROM prospects WHERE linkedin_url = ?').get(linkedinUrl) as { crawled_at: string } | undefined;
+  if (!row) return false;
+  const age = (Date.now() - new Date(row.crawled_at).getTime()) / (1000 * 60 * 60 * 24);
+  return age < maxAgeDays;
 }
 
 /** Get all prospects ordered by score descending. */

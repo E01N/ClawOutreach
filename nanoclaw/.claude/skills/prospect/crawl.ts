@@ -15,10 +15,10 @@ import type { Page } from 'playwright';
 import path from 'path';
 import fs from 'fs';
 import Anthropic from '@anthropic-ai/sdk';
-import { scoreProspect } from './score.js';
+import { scoreProspect, TARGET_TITLES } from './score.js';
 import { generateDrafts } from './draft.js';
 import { researchProspect, closeResearchBrowser } from './research.js';
-import { openDb, upsertProspect, saveDraft, alreadyCrawled, getAllProspects } from './store.js';
+import { openDb, upsertProspect, saveDraft, alreadyCrawled, recentlyCrawled, getAllProspects } from './store.js';
 import { TARGET_SCHOOLS } from './schools.js';
 
 // --- Config ---
@@ -34,7 +34,7 @@ if (fs.existsSync(envPath)) {
 
 const PROFILE_DIR  = path.join(process.cwd(), 'data', 'linkedin-profile');
 const AUTH_MARKER  = path.join(process.cwd(), 'data', 'linkedin-auth.json');
-const MAX_PROFILES = 30;
+const MAX_PROFILES = 40;
 const MIN_SCORE_FOR_DRAFT = 5;
 
 // Delays in ms
@@ -228,12 +228,13 @@ async function runCrawl(): Promise<void> {
 
   log('LinkedIn session active. Collecting profile URLs...');
 
-  // Collect profile URLs from search results
-  const profileUrls: string[] = [];
+  // Collect ALL profile URLs from all searches first, then filter to uncrawled ones.
+  // This prevents cached profiles early in the list from blocking discovery of fresh
+  // profiles at schools searched later.
+  const allProfileUrls: string[] = [];
+  const shuffledSearches = [...LINKEDIN_SEARCHES].sort(() => Math.random() - 0.5);
 
-  for (const search of LINKEDIN_SEARCHES) {
-    if (profileUrls.length >= MAX_PROFILES) break;
-
+  for (const search of shuffledSearches) {
     await page.goto(search.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(2000);
 
@@ -251,14 +252,17 @@ async function runCrawl(): Promise<void> {
         .filter(Boolean);
     })()`);
 
-    const unique = [...new Set(links)].filter(u => !profileUrls.includes(u));
+    const unique = [...new Set(links)].filter(u => !allProfileUrls.includes(u));
     log(`[${search.label}]: found ${unique.length} new profile URL(s)`);
-    profileUrls.push(...unique);
+    allProfileUrls.push(...unique);
 
     await randomDelay();
   }
 
-  const toVisit = profileUrls.slice(0, MAX_PROFILES);
+  // Prioritise uncrawled profiles; pad with already-crawled ones only if needed
+  const uncrawled = allProfileUrls.filter(u => !alreadyCrawled(db, u));
+  log(`${allProfileUrls.length} total URLs collected — ${uncrawled.length} not yet crawled`);
+  const toVisit = uncrawled.slice(0, MAX_PROFILES);
   log(`Visiting ${toVisit.length} profile(s)...`);
 
   let newProspects = 0;
@@ -322,15 +326,15 @@ async function runCrawl(): Promise<void> {
       about:       profileData.about,
     });
 
-    // Require at least one title-pattern match — drop students, recruiters, etc.
-    // that only score on program area / institution keywords.
-    const hasTitleMatch = score > 0 && reason.includes('(+');
-    const titleOnlyScore = (() => {
-      const titlePatterns = [/director/i, /dean/i, /enrollment/i, /admissions/i, /registrar/i, /recruiter/i, /program\s+director/i];
-      return titlePatterns.some(p => p.test(profileData.title) || p.test(profileData.headline));
-    })();
-    if (!titleOnlyScore) {
-      log(`  Skipping ${profileData.name} — no admissions/director title match (score: ${score})`);
+    // Require a title match against the same patterns used for scoring.
+    // Bare /director/ or /dean/ are too broad — they match "Medical Director",
+    // "Dean of Medicine", etc. Using TARGET_TITLES keeps the filter in sync
+    // with scoring and rejects medical/research staff with no admissions role.
+    const hasTitleMatch = TARGET_TITLES.some(t =>
+      t.pattern.test(profileData.title) || t.pattern.test(profileData.headline)
+    );
+    if (!hasTitleMatch) {
+      log(`  Skipping ${profileData.name} — no admissions/enrollment title match (score: ${score})`);
       await randomDelay();
       continue;
     }
@@ -767,8 +771,8 @@ async function runSchoolCrawl(): Promise<void> {
       // Use school page URL as a stable unique key (name deduplication)
       const stableUrl = `school:${school.directoryUrl}#${entry.name.toLowerCase().replace(/\s+/g, '-')}`;
 
-      if (alreadyCrawled(db, stableUrl)) {
-        log(`[school]   Already stored: ${entry.name}`);
+      if (recentlyCrawled(db, stableUrl, 60)) {
+        log(`[school]   Crawled within 60 days, skipping: ${entry.name}`);
         continue;
       }
 

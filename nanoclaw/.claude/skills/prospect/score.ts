@@ -23,7 +23,7 @@ export interface ScoreResult {
   reason: string;
 }
 
-const TARGET_TITLES: Array<{ pattern: RegExp; points: number; label: string }> = [
+export const TARGET_TITLES: Array<{ pattern: RegExp; points: number; label: string }> = [
   { pattern: /director\s+of\s+admissions/i,                         points: 5, label: 'Director of Admissions' },
   { pattern: /dean\s+of\s+admissions/i,                             points: 5, label: 'Dean of Admissions' },
   { pattern: /vice\s+provost.*(enrollment|admissions)/i,            points: 5, label: 'VP Enrollment/Admissions' },

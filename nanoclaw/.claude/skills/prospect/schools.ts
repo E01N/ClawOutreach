@@ -89,4 +89,53 @@ export const TARGET_SCHOOLS: TargetSchool[] = [
   { name: 'Johns Hopkins Bloomberg SPH',         vertical: 'public_health',     directoryUrl: 'https://publichealth.jhu.edu/offices-and-services/admissions/contact-us' },
   { name: 'Harvard T.H. Chan School of Public Health', vertical: 'public_health', directoryUrl: 'https://www.hsph.harvard.edu/admissions/contact/' },
   { name: 'Columbia Mailman School of Public Health', vertical: 'public_health', directoryUrl: 'https://www.publichealth.columbia.edu/become-student/admissions/contact-us' },
+
+  // ── Healthcare / Medical (additional) ────────────────────────────────────
+  { name: 'Drexel University College of Medicine',   vertical: 'healthcare',     directoryUrl: 'https://drexel.edu/medicine/admissions/contact/' },
+  { name: 'Thomas Jefferson University Medicine',    vertical: 'healthcare',     directoryUrl: 'https://www.jefferson.edu/academics/colleges-schools-institutes/skmc/admissions/contact-us.html' },
+  { name: 'Tulane University School of Medicine',    vertical: 'healthcare',     directoryUrl: 'https://medicine.tulane.edu/admissions/contact-admissions' },
+  { name: 'Loyola University Chicago Medicine',      vertical: 'healthcare',     directoryUrl: 'https://ssom.luc.edu/admissions/contactus/' },
+  { name: 'Creighton University School of Medicine', vertical: 'healthcare',     directoryUrl: 'https://medicine.creighton.edu/admissions/contact' },
+
+  // ── Nursing (additional) ─────────────────────────────────────────────────
+  { name: 'Emory University Nell Hodgson Woodruff School of Nursing', vertical: 'nursing', directoryUrl: 'https://nursing.emory.edu/about/contact' },
+  { name: 'University of Michigan School of Nursing', vertical: 'nursing',       directoryUrl: 'https://nursing.umich.edu/about/contact-us' },
+  { name: 'Georgetown University School of Nursing', vertical: 'nursing',        directoryUrl: 'https://nursing.georgetown.edu/contact/' },
+  { name: 'Rush University College of Nursing',      vertical: 'nursing',        directoryUrl: 'https://www.rushu.rush.edu/college-nursing/contact-us' },
+  { name: 'Villanova University College of Nursing', vertical: 'nursing',        directoryUrl: 'https://www1.villanova.edu/villanova/nursing/contact.html' },
+
+  // ── Business (additional) ─────────────────────────────────────────────────
+  { name: 'Mendoza College of Business Notre Dame',  vertical: 'business',       directoryUrl: 'https://mendoza.nd.edu/admissions/contact/' },
+  { name: 'Babson College Graduate Programs',        vertical: 'business',       directoryUrl: 'https://www.babson.edu/academics/graduate-programs/contact-us/' },
+  { name: 'Boston College Carroll School of Management', vertical: 'business',   directoryUrl: 'https://www.bc.edu/bc-web/schools/carroll-school/graduate/mba/contact.html' },
+  { name: 'Villanova School of Business',            vertical: 'business',       directoryUrl: 'https://www1.villanova.edu/villanova/business/graduate/contact.html' },
+  { name: 'Loyola Quinlan School of Business',       vertical: 'business',       directoryUrl: 'https://www.luc.edu/quinlan/graduate/mba/contactus/' },
+
+  // ── Law (additional) ─────────────────────────────────────────────────────
+  { name: 'Loyola University Chicago School of Law', vertical: 'law',            directoryUrl: 'https://www.luc.edu/law/admissions/contact/' },
+  { name: 'DePaul University College of Law',        vertical: 'law',            directoryUrl: 'https://law.depaul.edu/about/contact-us/Pages/default.aspx' },
+  { name: 'University of Cincinnati College of Law', vertical: 'law',            directoryUrl: 'https://www.law.uc.edu/admissions/contact.html' },
+  { name: 'Seton Hall University School of Law',     vertical: 'law',            directoryUrl: 'https://law.shu.edu/admissions/contact-us.cfm' },
+
+  // ── Pharmacy (additional) ─────────────────────────────────────────────────
+  { name: 'Duquesne University School of Pharmacy',  vertical: 'pharmacy',       directoryUrl: 'https://www.duq.edu/academics/schools/pharmacy/contact' },
+  { name: 'Butler University College of Pharmacy',   vertical: 'pharmacy',       directoryUrl: 'https://www.butler.edu/pharmacy/admissions/contact/' },
+  { name: 'Creighton University School of Pharmacy', vertical: 'pharmacy',       directoryUrl: 'https://spahp.creighton.edu/pharmacy/contact' },
+
+  // ── PA Programs (additional) ──────────────────────────────────────────────
+  { name: 'Emory University PA Program',             vertical: 'pa_program',     directoryUrl: 'https://pa.emory.edu/admissions/contact.html' },
+  { name: 'Marquette University PA Program',         vertical: 'pa_program',     directoryUrl: 'https://www.marquette.edu/physician-assistant-studies/contact-us.php' },
+  { name: 'Rosalind Franklin University PA Program', vertical: 'pa_program',     directoryUrl: 'https://www.rosalindfranklin.edu/academics/college-of-health-professions/physician-assistant/contact/' },
+
+  // ── Physical Therapy (additional) ────────────────────────────────────────
+  { name: 'Duke University DPT Program',             vertical: 'physical_therapy', directoryUrl: 'https://dpt.duke.edu/admissions/contact' },
+  { name: 'Creighton University DPT Program',        vertical: 'physical_therapy', directoryUrl: 'https://spahp.creighton.edu/physical-therapy/contact' },
+
+  // ── Occupational Therapy (additional) ────────────────────────────────────
+  { name: 'Creighton University OT Program',         vertical: 'occupational_therapy', directoryUrl: 'https://spahp.creighton.edu/occupational-therapy/contact' },
+  { name: 'Colorado State University OT Program',    vertical: 'occupational_therapy', directoryUrl: 'https://www.chhs.colostate.edu/ot/contact/' },
+
+  // ── Public Health (additional) ────────────────────────────────────────────
+  { name: 'Drexel Dornsife School of Public Health', vertical: 'public_health',  directoryUrl: 'https://drexel.edu/dornsife/about/contact/' },
+  { name: 'Tulane School of Public Health',          vertical: 'public_health',  directoryUrl: 'https://sph.tulane.edu/contact-us' },
 ];
